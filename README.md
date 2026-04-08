@@ -316,7 +316,7 @@ Every script writes detailed timestamped logs:
 
 ## C# Migration
 
-A cross-platform C# re-implementation of the certificate generation and management logic. The .NET 8 CLI provides **directory creation, CA generation, server certificate generation, artifact export, certificate verification, status reporting**, and abstractions for **Windows trust store import/removal and firewall rule management**.
+A cross-platform C# re-implementation of the certificate generation and management logic. The .NET 8 CLI provides **directory creation, CA generation, server certificate generation, artifact export, certificate verification, status reporting, certificate renewal with backup rotation, uninstall with trust/firewall cleanup**, and abstractions for **Windows trust store import/removal, firewall rule management, and service restart**.
 
 ### Project Structure
 
@@ -346,6 +346,12 @@ dotnet run --project src/LocalCA.Cli -- verify --root-dir /tmp/LocalCA --verbose
 # Status — report certificate metadata and artifact presence
 dotnet run --project src/LocalCA.Cli -- status --root-dir /tmp/LocalCA
 
+# Renew — rotate the server certificate (keeps the CA)
+dotnet run --project src/LocalCA.Cli -- renew --root-dir /tmp/LocalCA --force --verbose
+
+# Uninstall — remove trust entries, firewall rules, and optionally files
+dotnet run --project src/LocalCA.Cli -- uninstall --root-dir /tmp/LocalCA --yes --remove-files
+
 # See all commands
 dotnet run --project src/LocalCA.Cli -- --help
 ```
@@ -366,6 +372,11 @@ dotnet run --project src/LocalCA.Cli -- --help
 | Windows trust store import/remove (`ITrustStore`) | 2 | Done |
 | Windows firewall rule management (`IFirewallManager`) | 2 | Done |
 | `IProcessRunner` abstraction for testable shell-out | 2 | Done |
+| `localca renew` — server cert renewal with expiry threshold | 3 | Done |
+| Backup rotation (timestamped backups, keep latest 5) | 3 | Done |
+| Service restart hook (`IServiceController`) | 3 | Done |
+| `localca uninstall` — trust store, firewall, file cleanup | 3 | Done |
+| Trust store removal by thumbprint + subject fallback | 3 | Done |
 
 ### CLI Commands
 
@@ -411,23 +422,82 @@ localca status [options]
 
 Exit codes: `0` = all core artifacts present, `1` = one or more missing.
 
-### Architecture — Phase 2 Abstractions
+#### `localca renew`
+
+Renew the server certificate using the existing CA. Checks expiry against a threshold, backs up current artifacts, generates a new server cert, verifies it, and optionally restarts a Windows service.
+
+```
+localca renew [options]
+
+  --root-dir <path>          Base directory (default: platform-dependent)
+  --app-name <name>          App name in cert subjects (default: MyApp)
+  --server-valid-days <days> New server cert lifetime (default: 825)
+  --threshold-days <days>    Renew only if cert expires within N days (default: 30)
+  --restart-service <name>   Windows service to restart after renewal
+  --force                    Renew regardless of current cert expiry
+  --verbose                  Verbose console output
+```
+
+Exit codes: `0` = success (or no renewal needed), `1` = CA not found, `99` = unexpected error.
+
+**What renewal does:**
+
+1. Validates CA artifacts exist (`private/ca.key`, `certs/ca.crt`, `server/`)
+2. Checks current server cert expiry against `--threshold-days` (skip with `--force`)
+3. Backs up all server artifacts to `server/backup-YYYYMMDD-HHmmss/`
+4. Generates a new server key + cert + PFX + fullchain PEM, signed by the existing CA
+5. Verifies the renewed cert against the CA
+6. Optionally restarts a Windows service via `--restart-service`
+7. Prunes old backups, keeping the latest 5
+
+**Note:** The CA certificate and private key are never modified during renewal. No trust store changes are needed.
+
+#### `localca uninstall`
+
+Remove trust store entries, firewall rules, and optionally all CA files.
+
+```
+localca uninstall [options]
+
+  --root-dir <path>          Base directory (default: platform-dependent)
+  --app-name <name>          App name for trust/firewall matching (default: MyApp)
+  --https-port <port>        HTTPS port for firewall rule matching (default: 443)
+  --remove-files             Delete all CA files and directories
+  --yes                      Skip confirmation prompt
+  --verbose                  Verbose console output
+```
+
+Exit codes: `0` = success, `99` = unexpected error.
+
+**What uninstall does:**
+
+1. Prompts for confirmation (skip with `--yes`)
+2. Removes CA certificate from Windows trust stores by thumbprint; falls back to subject-based removal if the cert file is missing
+3. Removes the firewall inbound rule matching `<AppName> HTTPS (localhost:<port>)`
+4. Optionally deletes the entire `--root-dir` and all contents (`--remove-files`)
+
+**Windows note:** Trust store and firewall operations require elevation (Run as Administrator) for `LocalMachine` scope. On non-Windows platforms, these operations are skipped.
+
+### Architecture — Phase 2 & 3 Abstractions
 
 Phase 2 introduces testable interfaces for OS-specific operations:
 
 | Interface | Implementation | Purpose |
 |---|---|---|
-| `ITrustStore` | `WindowsTrustStore` | Import/remove CA certs from Windows Root CA stores (LocalMachine + CurrentUser) via `X509Store` API |
+| `ITrustStore` | `WindowsTrustStore` | Import/remove CA certs from Windows Root CA stores (LocalMachine + CurrentUser) via `X509Store` API. Supports removal by thumbprint and subject fallback. |
 | `IFirewallManager` | `WindowsFirewallManager` | Add/remove/check inbound TCP rules via `netsh advfirewall` |
-| `IProcessRunner` | `SystemProcessRunner` | Run external processes; injectable for unit testing firewall manager |
+| `IProcessRunner` | `SystemProcessRunner` | Run external processes; injectable for unit testing firewall and service controller |
+| `IServiceController` | `WindowsServiceController` | Restart/query Windows services via `sc.exe`; injectable for unit testing renewal |
 
-The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `WindowsFirewallManager` wraps `netsh advfirewall` commands behind `IProcessRunner` so all netsh interactions can be unit-tested with a mock process runner.
+The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `WindowsFirewallManager` and `WindowsServiceController` wrap shell commands behind `IProcessRunner` so all interactions can be unit-tested with a mock process runner. `BackupManager` is a static utility for timestamped backup creation and rotation.
 
 ### Windows-Specific Notes
 
 - **Trust store operations** require elevation (Run as Administrator) for `LocalMachine` store access. `CurrentUser` store works without elevation.
 - **Firewall rules** require elevation. The firewall manager creates inbound TCP allow rules matching the PowerShell installer's behavior.
-- On non-Windows platforms, trust store and firewall operations are skipped in the `status` command. The interfaces are available for future platform-specific implementations.
+- **Service restart** uses `sc.exe` under the hood, which requires appropriate permissions for the target service.
+- **Uninstall** attempts trust store removal by thumbprint first. If the CA cert file is not available (already deleted), it falls back to subject-based matching (`<AppName> Localhost Root CA`).
+- On non-Windows platforms, trust store, firewall, and service operations are skipped. The interfaces are available for future platform-specific implementations.
 
 ### Assumptions
 

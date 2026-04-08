@@ -114,13 +114,140 @@ statusCommand.SetHandler((rootDir) =>
     Environment.ExitCode = cmd.Execute();
 }, statusRootDirOption);
 
+// ── renew command ──────────────────────────────────────────────
+
+var renewRootDirOption = new Option<string>(
+    "--root-dir",
+    description: "Base directory for CA files",
+    getDefaultValue: () => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "LocalCA"));
+
+var renewAppNameOption = new Option<string>(
+    "--app-name",
+    getDefaultValue: () => "MyApp",
+    description: "Application name used in certificate subjects");
+
+var renewServerValidDaysOption = new Option<int>(
+    "--server-valid-days",
+    getDefaultValue: () => 825,
+    description: "New server certificate lifetime in days");
+
+var renewThresholdOption = new Option<int>(
+    "--threshold-days",
+    getDefaultValue: () => 30,
+    description: "Renew only if cert expires within this many days");
+
+var renewRestartServiceOption = new Option<string?>(
+    "--restart-service",
+    getDefaultValue: () => null,
+    description: "Windows service name to restart after renewal");
+
+var renewForceOption = new Option<bool>(
+    "--force",
+    getDefaultValue: () => false,
+    description: "Renew regardless of current cert expiry");
+
+var renewVerboseOption = new Option<bool>(
+    "--verbose",
+    getDefaultValue: () => false,
+    description: "Enable verbose logging to console");
+
+var renewCommand = new Command("renew", "Renew the server certificate using the existing CA")
+{
+    renewRootDirOption,
+    renewAppNameOption,
+    renewServerValidDaysOption,
+    renewThresholdOption,
+    renewRestartServiceOption,
+    renewForceOption,
+    renewVerboseOption
+};
+
+renewCommand.SetHandler((rootDir, appName, serverValidDays, thresholdDays, restartService, force, verbose) =>
+{
+    var cmd = new RenewCommand
+    {
+        RootDir = rootDir,
+        AppName = appName,
+        ServerValidDays = serverValidDays,
+        RenewThresholdDays = thresholdDays,
+        RestartServiceName = restartService,
+        Force = force,
+        Verbose = verbose
+    };
+    Environment.ExitCode = cmd.Execute();
+}, renewRootDirOption, renewAppNameOption, renewServerValidDaysOption, renewThresholdOption,
+   renewRestartServiceOption, renewForceOption, renewVerboseOption);
+
+// ── uninstall command ──────────────────────────────────────────
+
+var uninstallRootDirOption = new Option<string>(
+    "--root-dir",
+    description: "Base directory for CA files",
+    getDefaultValue: () => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "LocalCA"));
+
+var uninstallAppNameOption = new Option<string>(
+    "--app-name",
+    getDefaultValue: () => "MyApp",
+    description: "Application name (for trust store and firewall rule matching)");
+
+var uninstallPortOption = new Option<int>(
+    "--https-port",
+    getDefaultValue: () => 443,
+    description: "HTTPS port (for firewall rule matching)");
+
+var uninstallRemoveFilesOption = new Option<bool>(
+    "--remove-files",
+    getDefaultValue: () => false,
+    description: "Delete all CA files and directories");
+
+var uninstallYesOption = new Option<bool>(
+    "--yes",
+    getDefaultValue: () => false,
+    description: "Skip confirmation prompt");
+
+var uninstallVerboseOption = new Option<bool>(
+    "--verbose",
+    getDefaultValue: () => false,
+    description: "Enable verbose logging to console");
+
+var uninstallCommand = new Command("uninstall", "Remove trust store entries, firewall rules, and optionally all CA files")
+{
+    uninstallRootDirOption,
+    uninstallAppNameOption,
+    uninstallPortOption,
+    uninstallRemoveFilesOption,
+    uninstallYesOption,
+    uninstallVerboseOption
+};
+
+uninstallCommand.SetHandler((rootDir, appName, httpsPort, removeFiles, yes, verbose) =>
+{
+    var cmd = new UninstallCommand
+    {
+        RootDir = rootDir,
+        AppName = appName,
+        HttpsPort = httpsPort,
+        RemoveFiles = removeFiles,
+        YesConfirm = yes,
+        Verbose = verbose
+    };
+    Environment.ExitCode = cmd.Execute();
+}, uninstallRootDirOption, uninstallAppNameOption, uninstallPortOption,
+   uninstallRemoveFilesOption, uninstallYesOption, uninstallVerboseOption);
+
 // ── root command ────────────────────────────────────────────────
 
 var rootCommand = new RootCommand("LocalCA — localhost certificate authority toolkit (C# implementation)")
 {
     installCommand,
     verifyCommand,
-    statusCommand
+    statusCommand,
+    renewCommand,
+    uninstallCommand
 };
 
 return await rootCommand.InvokeAsync(args);

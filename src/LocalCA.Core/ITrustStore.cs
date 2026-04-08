@@ -23,4 +23,11 @@ public interface ITrustStore
     /// Check whether a certificate with the given thumbprint is currently trusted.
     /// </summary>
     bool IsCertificateTrusted(string thumbprint);
+
+    /// <summary>
+    /// Remove CA certificates from the trust store matching a subject substring.
+    /// Used as a fallback when the thumbprint is not available.
+    /// Returns the number of certificates removed.
+    /// </summary>
+    int RemoveBySubject(string subjectMatch);
 }
