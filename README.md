@@ -314,20 +314,20 @@ Every script writes detailed timestamped logs:
 
 ---
 
-## C# Migration — Phase 1
+## C# Migration
 
-A cross-platform C# re-implementation of the core certificate generation logic is underway. Phase 1 provides a standalone .NET 8 CLI that performs **directory creation, CA generation, server certificate generation, and artifact export** — equivalent to Phases 2–5 of the PowerShell installer. It does **not** yet handle OpenSSL detection, trust-store import, or firewall rules.
+A cross-platform C# re-implementation of the certificate generation and management logic. The .NET 8 CLI provides **directory creation, CA generation, server certificate generation, artifact export, certificate verification, status reporting**, and abstractions for **Windows trust store import/removal and firewall rule management**.
 
 ### Project Structure
 
 ```
 LocalCA.sln
 ├── src/
-│   ├── LocalCA.Core/          Core crypto, filesystem, and logging
+│   ├── LocalCA.Core/          Core crypto, trust store, firewall, verify, status
 │   └── LocalCA.Cli/           CLI entry point (System.CommandLine)
 └── tests/
-    ├── LocalCA.Core.Tests/    Unit tests for crypto layer
-    └── LocalCA.Cli.Tests/     Integration tests for install command
+    ├── LocalCA.Core.Tests/    Unit tests for crypto, verify, status, firewall
+    └── LocalCA.Cli.Tests/     Integration tests for all commands
 ```
 
 ### Build & Run
@@ -337,33 +337,41 @@ LocalCA.sln
 dotnet build LocalCA.sln
 dotnet test LocalCA.sln
 
-# Run the install command
+# Install — generate CA and server certificates
 dotnet run --project src/LocalCA.Cli -- install --root-dir /tmp/LocalCA --app-name MyApp --verbose
 
-# See all options
-dotnet run --project src/LocalCA.Cli -- install --help
+# Verify — validate server cert against the CA
+dotnet run --project src/LocalCA.Cli -- verify --root-dir /tmp/LocalCA --verbose
+
+# Status — report certificate metadata and artifact presence
+dotnet run --project src/LocalCA.Cli -- status --root-dir /tmp/LocalCA
+
+# See all commands
+dotnet run --project src/LocalCA.Cli -- --help
 ```
 
-### What Phase 1 Covers
+### Feature Matrix
 
-| Feature | Status |
-|---|---|
-| Directory layout (`private/`, `certs/`, `server/`) | Done |
-| Root CA generation (4096-bit RSA, 10-year default) | Done |
-| Server cert with SANs (localhost, machine name, 127.0.0.1, ::1) | Done |
-| PFX export (empty password) | Done |
-| PEM export (cert, key, fullchain) | Done |
-| Timestamped install log | Done |
-| `--force` overwrite support | Done |
+| Feature | Phase | Status |
+|---|---|---|
+| Directory layout (`private/`, `certs/`, `server/`) | 1 | Done |
+| Root CA generation (4096-bit RSA, 10-year default) | 1 | Done |
+| Server cert with SANs (localhost, machine name, 127.0.0.1, ::1) | 1 | Done |
+| PFX export (empty password) | 1 | Done |
+| PEM export (cert, key, fullchain) | 1 | Done |
+| Timestamped install log | 1 | Done |
+| `--force` overwrite support | 1 | Done |
+| `localca verify` — chain/validity/SAN/EKU validation | 2 | Done |
+| `localca status` — artifact existence + cert metadata report | 2 | Done |
+| Windows trust store import/remove (`ITrustStore`) | 2 | Done |
+| Windows firewall rule management (`IFirewallManager`) | 2 | Done |
+| `IProcessRunner` abstraction for testable shell-out | 2 | Done |
 
-### Assumptions
+### CLI Commands
 
-- Uses .NET `System.Security.Cryptography` APIs — no OpenSSL dependency required.
-- Default root directory is platform-specific (`/usr/share/LocalCA` on Linux, `C:\ProgramData\LocalCA` on Windows) via `Environment.SpecialFolder.CommonApplicationData`.
-- PFX uses an empty password for automation compatibility, matching the PowerShell scripts.
-- Certificate specs (key sizes, validity periods, SANs) match the PowerShell implementation.
+#### `localca install`
 
-### Phase 1 CLI Options
+Generate the CA and server certificates, export all artifacts.
 
 ```
 localca install [options]
@@ -375,6 +383,58 @@ localca install [options]
   --force                    Overwrite existing CA
   --verbose                  Verbose console output
 ```
+
+Exit codes: `0` = success, `99` = unexpected error.
+
+#### `localca verify`
+
+Validate the server certificate against the CA. Checks chain trust, validity periods, issuer match, serverAuth EKU, and SANs.
+
+```
+localca verify [options]
+
+  --root-dir <path>          Base directory (default: platform-dependent)
+  --verbose                  Show detailed per-check results
+```
+
+Exit codes: `0` = all checks pass, `1` = one or more checks failed.
+
+#### `localca status`
+
+Report whether CA/server artifacts exist and display certificate metadata (subject, thumbprint, validity window, key size, SANs, trust status on Windows).
+
+```
+localca status [options]
+
+  --root-dir <path>          Base directory (default: platform-dependent)
+```
+
+Exit codes: `0` = all core artifacts present, `1` = one or more missing.
+
+### Architecture — Phase 2 Abstractions
+
+Phase 2 introduces testable interfaces for OS-specific operations:
+
+| Interface | Implementation | Purpose |
+|---|---|---|
+| `ITrustStore` | `WindowsTrustStore` | Import/remove CA certs from Windows Root CA stores (LocalMachine + CurrentUser) via `X509Store` API |
+| `IFirewallManager` | `WindowsFirewallManager` | Add/remove/check inbound TCP rules via `netsh advfirewall` |
+| `IProcessRunner` | `SystemProcessRunner` | Run external processes; injectable for unit testing firewall manager |
+
+The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `WindowsFirewallManager` wraps `netsh advfirewall` commands behind `IProcessRunner` so all netsh interactions can be unit-tested with a mock process runner.
+
+### Windows-Specific Notes
+
+- **Trust store operations** require elevation (Run as Administrator) for `LocalMachine` store access. `CurrentUser` store works without elevation.
+- **Firewall rules** require elevation. The firewall manager creates inbound TCP allow rules matching the PowerShell installer's behavior.
+- On non-Windows platforms, trust store and firewall operations are skipped in the `status` command. The interfaces are available for future platform-specific implementations.
+
+### Assumptions
+
+- Uses .NET `System.Security.Cryptography` APIs — no OpenSSL dependency required.
+- Default root directory is platform-specific (`/usr/share/LocalCA` on Linux, `C:\ProgramData\LocalCA` on Windows) via `Environment.SpecialFolder.CommonApplicationData`.
+- PFX uses an empty password for automation compatibility, matching the PowerShell scripts.
+- Certificate specs (key sizes, validity periods, SANs) match the PowerShell implementation.
 
 ---
 
