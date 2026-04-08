@@ -37,7 +37,7 @@ jobs:
           --output ./publish/${{ matrix.rid }}
 
       - name: Create archive (Linux/macOS)
-        if: runner.os != 'Windows'
+        if: matrix.rid != 'win-x64'
         run: |
           cd publish/${{ matrix.rid }}
           tar -czf ../../localca-${{ matrix.rid }}.tar.gz *

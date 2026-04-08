@@ -16,8 +16,8 @@ public static class CertificateExporter
 
     public static string ExportPrivateKeyPem(RSA privateKey)
     {
-        var keyBytes = privateKey.ExportRSAPrivateKey();
-        return new string(PemEncoding.Write("RSA PRIVATE KEY", keyBytes));
+        var keyBytes = privateKey.ExportPkcs8PrivateKey();
+        return new string(PemEncoding.Write("PRIVATE KEY", keyBytes));
     }
 
     public static byte[] ExportPfx(X509Certificate2 cert, string password = "")

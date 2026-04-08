@@ -26,11 +26,54 @@ public class CertificateExporterTests
 
         var pem = CertificateExporter.ExportPrivateKeyPem(key);
 
-        Assert.StartsWith("-----BEGIN RSA PRIVATE KEY-----", pem);
-        Assert.Contains("-----END RSA PRIVATE KEY-----", pem);
+        Assert.StartsWith("-----BEGIN PRIVATE KEY-----", pem);
+        Assert.Contains("-----END PRIVATE KEY-----", pem);
 
         key.Dispose();
         cert.Dispose();
+    }
+
+    [Fact]
+    public void ExportPrivateKeyPem_RoundtripsViaPkcs8()
+    {
+        var (cert, key) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
+
+        var pem = CertificateExporter.ExportPrivateKeyPem(key);
+
+        // Re-import the PKCS#8 PEM and verify it can sign data
+        var reimported = RSA.Create();
+        reimported.ImportFromPem(pem);
+
+        var data = new byte[] { 1, 2, 3, 4 };
+        var signature = reimported.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        Assert.True(key.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
+
+        reimported.Dispose();
+        key.Dispose();
+        cert.Dispose();
+    }
+
+    [Fact]
+    public void ExportPrivateKeyPem_WorksWithPfxReimportedKey()
+    {
+        // Simulates the Windows CNG scenario: load cert from PFX, then export key
+        var (caCert, caKey) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
+        var serverCert = ServerCertificateGenerator.CreateServerCertificate(caCert, validDays: 30);
+
+        // Re-import from PFX (on Windows this creates a CNG-backed key)
+        var pfxBytes = serverCert.Export(X509ContentType.Pfx, "");
+        var reimported = new X509Certificate2(pfxBytes, "", X509KeyStorageFlags.Exportable);
+        var rsaKey = reimported.GetRSAPrivateKey()!;
+
+        // This must not throw — the whole point of the PKCS#8 fix
+        var pem = CertificateExporter.ExportPrivateKeyPem(rsaKey);
+        Assert.StartsWith("-----BEGIN PRIVATE KEY-----", pem);
+        Assert.Contains("-----END PRIVATE KEY-----", pem);
+
+        reimported.Dispose();
+        serverCert.Dispose();
+        caKey.Dispose();
+        caCert.Dispose();
     }
 
     [Fact]
@@ -44,7 +87,7 @@ public class CertificateExporterTests
         // Should contain two certificates and one private key
         var certCount = fullchain.Split("-----BEGIN CERTIFICATE-----").Length - 1;
         Assert.Equal(2, certCount);
-        Assert.Contains("-----BEGIN RSA PRIVATE KEY-----", fullchain);
+        Assert.Contains("-----BEGIN PRIVATE KEY-----", fullchain);
 
         serverCert.Dispose();
         caKey.Dispose();

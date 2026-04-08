@@ -43,7 +43,7 @@ public static class CertificateAuthority
 
         // Export and re-import so the cert is detached from the ephemeral key
         var exported = RSA.Create();
-        exported.ImportRSAPrivateKey(rsa.ExportRSAPrivateKey(), out _);
+        exported.ImportPkcs8PrivateKey(rsa.ExportPkcs8PrivateKey(), out _);
 
         return (cert, exported);
     }
