@@ -16,7 +16,23 @@ public static class CertificateExporter
 
     public static string ExportPrivateKeyPem(RSA privateKey)
     {
-        var keyBytes = privateKey.ExportPkcs8PrivateKey();
+        byte[] keyBytes;
+        try
+        {
+            keyBytes = privateKey.ExportPkcs8PrivateKey();
+        }
+        catch (CryptographicException)
+        {
+            // On Windows, CNG-backed keys may refuse ExportPkcs8PrivateKey even
+            // when created with X509KeyStorageFlags.Exportable.  Work around by
+            // exporting the key parameters and re-importing into a new,
+            // software-only RSA instance that is always exportable.
+            var parameters = privateKey.ExportParameters(includePrivateParameters: true);
+            using var exportable = RSA.Create();
+            exportable.ImportParameters(parameters);
+            keyBytes = exportable.ExportPkcs8PrivateKey();
+        }
+
         return new string(PemEncoding.Write("PRIVATE KEY", keyBytes));
     }
 
