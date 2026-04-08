@@ -352,6 +352,10 @@ dotnet run --project src/LocalCA.Cli -- renew --root-dir /tmp/LocalCA --force --
 # Uninstall — remove trust entries, firewall rules, and optionally files
 dotnet run --project src/LocalCA.Cli -- uninstall --root-dir /tmp/LocalCA --yes --remove-files
 
+# Bundle — package CLI artifacts for distribution
+dotnet publish src/LocalCA.Cli -c Release -o ./publish
+dotnet run --project src/LocalCA.Cli -- bundle --source-dir ./publish --verbose
+
 # See all commands
 dotnet run --project src/LocalCA.Cli -- --help
 ```
@@ -377,6 +381,10 @@ dotnet run --project src/LocalCA.Cli -- --help
 | Service restart hook (`IServiceController`) | 3 | Done |
 | `localca uninstall` — trust store, firewall, file cleanup | 3 | Done |
 | Trust store removal by thumbprint + subject fallback | 3 | Done |
+| `localca bundle` — package CLI artifacts for distribution | 4 | Done |
+| Config file support (`localca.json`) with precedence | 4 | Done |
+| GitHub Actions CI (build + test on push/PR) | 4 | Done |
+| GitHub Actions release pipeline (multi-platform) | 4 | Done |
 
 ### CLI Commands
 
@@ -393,6 +401,7 @@ localca install [options]
   --server-valid-days <days> Server cert lifetime (default: 825)
   --force                    Overwrite existing CA
   --verbose                  Verbose console output
+  --config <path>            Path to localca.json config file (optional)
 ```
 
 Exit codes: `0` = success, `99` = unexpected error.
@@ -477,6 +486,107 @@ Exit codes: `0` = success, `99` = unexpected error.
 4. Optionally deletes the entire `--root-dir` and all contents (`--remove-files`)
 
 **Windows note:** Trust store and firewall operations require elevation (Run as Administrator) for `LocalMachine` scope. On non-Windows platforms, these operations are skipped.
+
+#### `localca bundle`
+
+Package CLI artifacts and supporting files into a distributable bundle directory.
+
+```
+localca bundle [options]
+
+  --output-dir <path>        Output directory (default: ./localca-bundle)
+  --source-dir <path>        Published CLI directory (from 'dotnet publish')
+  --runtime <rid>            Runtime identifier for manifest (e.g. win-x64, linux-x64)
+  --no-scripts               Exclude PowerShell scripts
+  --verbose                  Verbose console output
+```
+
+Exit codes: `0` = success, `1` = source not found or empty, `99` = unexpected error.
+
+**Usage:**
+
+```bash
+# 1. Publish the CLI
+dotnet publish src/LocalCA.Cli -c Release -o ./publish
+
+# 2. Bundle it
+dotnet run --project src/LocalCA.Cli -- bundle --source-dir ./publish --output-dir ./localca-bundle --verbose
+
+# Self-contained bundle for a specific platform
+dotnet publish src/LocalCA.Cli -c Release -r win-x64 --self-contained -o ./publish-win
+dotnet run --project src/LocalCA.Cli -- bundle --source-dir ./publish-win --runtime win-x64 --output-dir ./localca-bundle-win
+```
+
+**Bundle output:**
+
+```
+localca-bundle/
+├── cli/                    ← Published CLI artifacts
+│   ├── LocalCA.Cli.dll
+│   ├── LocalCA.Core.dll
+│   └── ...
+├── scripts/                ← PowerShell helper scripts (optional)
+│   ├── Install-LocalCA-Localhost.ps1
+│   ├── Renew-ServerCert.ps1
+│   └── Uninstall-LocalCA.ps1
+├── MANIFEST.json           ← Bundle metadata (tool, version, files, platform)
+├── BUNDLE-README.txt       ← Quick-start usage instructions
+└── bundle.log              ← Detailed bundle creation log
+```
+
+### Config File (`localca.json`)
+
+Place a `localca.json` file in the working directory or the `--root-dir` to set default values for all commands. CLI arguments and environment variables always take precedence.
+
+**Precedence:** CLI args > environment variables > config file > defaults
+
+**Example `localca.json`:**
+
+```json
+{
+    // Comments are supported
+    "rootDir": "/opt/LocalCA",
+    "appName": "MyApp",
+    "caValidDays": 3650,
+    "serverValidDays": 825,
+    "thresholdDays": 30,
+    "httpsPort": 443,
+    "verbose": false,
+    "restartService": "MyAppService"
+}
+```
+
+**Supported settings:**
+
+| Setting | Type | Description | Env Variable |
+|---|---|---|---|
+| `rootDir` | string | Base directory for CA files | `LOCALCA_ROOT_DIR` |
+| `appName` | string | Application name in cert subjects | `LOCALCA_APP_NAME` |
+| `caValidDays` | int | Root CA lifetime in days | `LOCALCA_CA_VALID_DAYS` |
+| `serverValidDays` | int | Server cert lifetime in days | `LOCALCA_SERVER_VALID_DAYS` |
+| `thresholdDays` | int | Renewal threshold in days | — |
+| `httpsPort` | int | HTTPS port for firewall rules | — |
+| `verbose` | bool | Enable verbose logging | `LOCALCA_VERBOSE` |
+| `restartService` | string | Windows service to restart after renewal | — |
+
+**Config file search order:**
+1. Explicit `--config <path>` argument
+2. `localca.json` in the current working directory
+3. `localca.json` in the `--root-dir`
+
+### CI / Release Pipeline
+
+The repository includes GitHub Actions workflows for continuous integration and releases.
+
+**CI (`.github/workflows/ci.yml`):** Runs on every push to `main` and on pull requests. Builds and tests on both Ubuntu and Windows.
+
+**Release (`.github/workflows/release.yml`):** Triggered by pushing a version tag (e.g. `v1.0.0`). Publishes self-contained single-file binaries for `win-x64`, `linux-x64`, `osx-x64`, and `osx-arm64`, then creates a GitHub Release with all artifacts.
+
+```bash
+# To create a release:
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ### Architecture — Phase 2 & 3 Abstractions
 

@@ -1,6 +1,25 @@
 using System.CommandLine;
 using LocalCA.Core;
 
+// ── Global config option ───────────────────────────────────────
+
+var configOption = new Option<string?>(
+    "--config",
+    description: "Path to localca.json config file (default: auto-detect in CWD or root-dir)");
+
+// ── Config file loading helper ─────────────────────────────────
+
+static LocalCaConfig LoadConfig(string? configPath, string? rootDir)
+{
+    var resolved = ConfigLoader.FindConfigFile(configPath, rootDir);
+    if (resolved != null)
+    {
+        Console.WriteLine($"Using config: {resolved}");
+        return ConfigLoader.Load(resolved);
+    }
+    return new LocalCaConfig();
+}
+
 // ── Shared options ──────────────────────────────────────────────
 
 var rootDirOption = new Option<string>(
@@ -44,22 +63,25 @@ var installCommand = new Command("install", "Create directory layout, generate C
     caValidDaysOption,
     serverValidDaysOption,
     forceOption,
-    verboseOption
+    verboseOption,
+    configOption
 };
 
-installCommand.SetHandler((rootDir, appName, caValidDays, serverValidDays, force, verbose) =>
+installCommand.SetHandler((rootDir, appName, caValidDays, serverValidDays, force, verbose, configPath) =>
 {
+    var cfg = LoadConfig(configPath, rootDir);
+    var defaultRootDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "LocalCA");
     var cmd = new InstallCommand
     {
-        RootDir = rootDir,
-        AppName = appName,
-        CaValidDays = caValidDays,
-        ServerValidDays = serverValidDays,
-        Force = force,
-        Verbose = verbose
+        RootDir = ConfigLoader.ResolveString(rootDir == defaultRootDir ? null : rootDir, "LOCALCA_ROOT_DIR", cfg.RootDir, defaultRootDir),
+        AppName = ConfigLoader.ResolveString(appName == "MyApp" ? null : appName, "LOCALCA_APP_NAME", cfg.AppName, "MyApp"),
+        CaValidDays = ConfigLoader.ResolveInt(caValidDays, 3650, "LOCALCA_CA_VALID_DAYS", cfg.CaValidDays, 3650),
+        ServerValidDays = ConfigLoader.ResolveInt(serverValidDays, 825, "LOCALCA_SERVER_VALID_DAYS", cfg.ServerValidDays, 825),
+        Force = ConfigLoader.ResolveBool(force, "LOCALCA_FORCE", null, false),
+        Verbose = ConfigLoader.ResolveBool(verbose, "LOCALCA_VERBOSE", cfg.Verbose, false)
     };
     Environment.ExitCode = cmd.Execute();
-}, rootDirOption, appNameOption, caValidDaysOption, serverValidDaysOption, forceOption, verboseOption);
+}, rootDirOption, appNameOption, caValidDaysOption, serverValidDaysOption, forceOption, verboseOption, configOption);
 
 // ── verify command ──────────────────────────────────────────────
 
@@ -239,6 +261,55 @@ uninstallCommand.SetHandler((rootDir, appName, httpsPort, removeFiles, yes, verb
 }, uninstallRootDirOption, uninstallAppNameOption, uninstallPortOption,
    uninstallRemoveFilesOption, uninstallYesOption, uninstallVerboseOption);
 
+// ── bundle command ─────────────────────────────────────────────
+
+var bundleOutputOption = new Option<string>(
+    "--output-dir",
+    getDefaultValue: () => Path.Combine(Directory.GetCurrentDirectory(), "localca-bundle"),
+    description: "Output directory for the bundle");
+
+var bundleSourceOption = new Option<string?>(
+    "--source-dir",
+    getDefaultValue: () => null,
+    description: "Published CLI artifacts directory (from 'dotnet publish')");
+
+var bundleRidOption = new Option<string>(
+    "--runtime",
+    getDefaultValue: () => "",
+    description: "Runtime identifier (e.g. win-x64, linux-x64) for manifest metadata");
+
+var bundleNoScriptsOption = new Option<bool>(
+    "--no-scripts",
+    getDefaultValue: () => false,
+    description: "Exclude PowerShell scripts from the bundle");
+
+var bundleVerboseOption = new Option<bool>(
+    "--verbose",
+    getDefaultValue: () => false,
+    description: "Verbose console output");
+
+var bundleCommand = new Command("bundle", "Package CLI artifacts and supporting files into a distributable bundle")
+{
+    bundleOutputOption,
+    bundleSourceOption,
+    bundleRidOption,
+    bundleNoScriptsOption,
+    bundleVerboseOption
+};
+
+bundleCommand.SetHandler((outputDir, sourceDir, runtime, noScripts, verbose) =>
+{
+    var cmd = new BundleCommand
+    {
+        OutputDir = outputDir,
+        SourceDir = sourceDir,
+        RuntimeIdentifier = runtime,
+        IncludeScripts = !noScripts,
+        Verbose = verbose
+    };
+    Environment.ExitCode = cmd.Execute();
+}, bundleOutputOption, bundleSourceOption, bundleRidOption, bundleNoScriptsOption, bundleVerboseOption);
+
 // ── root command ────────────────────────────────────────────────
 
 var rootCommand = new RootCommand("LocalCA — localhost certificate authority toolkit (C# implementation)")
@@ -247,7 +318,8 @@ var rootCommand = new RootCommand("LocalCA — localhost certificate authority t
     verifyCommand,
     statusCommand,
     renewCommand,
-    uninstallCommand
+    uninstallCommand,
+    bundleCommand
 };
 
 return await rootCommand.InvokeAsync(args);
