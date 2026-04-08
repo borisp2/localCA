@@ -314,6 +314,70 @@ Every script writes detailed timestamped logs:
 
 ---
 
+## C# Migration — Phase 1
+
+A cross-platform C# re-implementation of the core certificate generation logic is underway. Phase 1 provides a standalone .NET 8 CLI that performs **directory creation, CA generation, server certificate generation, and artifact export** — equivalent to Phases 2–5 of the PowerShell installer. It does **not** yet handle OpenSSL detection, trust-store import, or firewall rules.
+
+### Project Structure
+
+```
+LocalCA.sln
+├── src/
+│   ├── LocalCA.Core/          Core crypto, filesystem, and logging
+│   └── LocalCA.Cli/           CLI entry point (System.CommandLine)
+└── tests/
+    ├── LocalCA.Core.Tests/    Unit tests for crypto layer
+    └── LocalCA.Cli.Tests/     Integration tests for install command
+```
+
+### Build & Run
+
+```bash
+# Requires .NET 8 SDK
+dotnet build LocalCA.sln
+dotnet test LocalCA.sln
+
+# Run the install command
+dotnet run --project src/LocalCA.Cli -- install --root-dir /tmp/LocalCA --app-name MyApp --verbose
+
+# See all options
+dotnet run --project src/LocalCA.Cli -- install --help
+```
+
+### What Phase 1 Covers
+
+| Feature | Status |
+|---|---|
+| Directory layout (`private/`, `certs/`, `server/`) | Done |
+| Root CA generation (4096-bit RSA, 10-year default) | Done |
+| Server cert with SANs (localhost, machine name, 127.0.0.1, ::1) | Done |
+| PFX export (empty password) | Done |
+| PEM export (cert, key, fullchain) | Done |
+| Timestamped install log | Done |
+| `--force` overwrite support | Done |
+
+### Assumptions
+
+- Uses .NET `System.Security.Cryptography` APIs — no OpenSSL dependency required.
+- Default root directory is platform-specific (`/usr/share/LocalCA` on Linux, `C:\ProgramData\LocalCA` on Windows) via `Environment.SpecialFolder.CommonApplicationData`.
+- PFX uses an empty password for automation compatibility, matching the PowerShell scripts.
+- Certificate specs (key sizes, validity periods, SANs) match the PowerShell implementation.
+
+### Phase 1 CLI Options
+
+```
+localca install [options]
+
+  --root-dir <path>          Base directory (default: platform-dependent)
+  --app-name <name>          App name in cert subjects (default: MyApp)
+  --ca-valid-days <days>     Root CA lifetime (default: 3650)
+  --server-valid-days <days> Server cert lifetime (default: 825)
+  --force                    Overwrite existing CA
+  --verbose                  Verbose console output
+```
+
+---
+
 ## Parameters Reference
 
 ### Install-LocalCA-Localhost.ps1
