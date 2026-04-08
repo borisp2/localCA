@@ -86,10 +86,12 @@ public static class ServerCertificateGenerator
         // Combine with private key
         var certWithKey = cert.CopyWithPrivateKey(serverKey);
 
-        // Return a new cert from export to ensure it's fully portable
+        // Return a new cert from PFX round-trip to ensure it's fully portable.
+        // EphemeralKeySet keeps the private key in memory only (no Windows key-store
+        // persistence), which avoids CNG non-exportable handle issues on Windows CI.
         return new X509Certificate2(
             certWithKey.Export(X509ContentType.Pfx, ""),
             "",
-            X509KeyStorageFlags.Exportable);
+            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
     }
 }

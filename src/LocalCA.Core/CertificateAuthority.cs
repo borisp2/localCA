@@ -41,10 +41,20 @@ public static class CertificateAuthority
 
         var cert = request.CreateSelfSigned(notBefore, notAfter);
 
-        // Export and re-import so the cert is detached from the ephemeral key
-        var exported = RSA.Create();
-        exported.ImportPkcs8PrivateKey(rsa.ExportPkcs8PrivateKey(), out _);
+        // PFX round-trip so both cert and key are fully portable.
+        // EphemeralKeySet keeps the private key in memory only (no Windows
+        // key-store persistence), avoiding CNG non-exportable handle issues.
+        var pfxBytes = cert.Export(X509ContentType.Pfx, "");
+        var portableCert = new X509Certificate2(
+            pfxBytes, "",
+            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
 
-        return (cert, exported);
+        // Extract a standalone RSA key so it can be used/disposed independently of the cert
+        var certKey = portableCert.GetRSAPrivateKey()
+            ?? throw new InvalidOperationException("CA certificate lost its private key during PFX round-trip.");
+        var exported = RSA.Create();
+        exported.ImportPkcs8PrivateKey(certKey.ExportPkcs8PrivateKey(), out _);
+
+        return (portableCert, exported);
     }
 }

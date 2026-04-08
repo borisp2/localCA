@@ -89,8 +89,10 @@ public class ServerCertificateGeneratorTests
         // Export to PFX with empty password
         var pfxBytes = CertificateExporter.ExportPfx(serverCert, "");
 
-        // Re-import
-        var imported = new X509Certificate2(pfxBytes, "", X509KeyStorageFlags.Exportable);
+        // Re-import with EphemeralKeySet to match Windows-safe production path
+        var imported = new X509Certificate2(
+            pfxBytes, "",
+            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
 
         Assert.True(imported.HasPrivateKey);
         Assert.Equal(serverCert.Thumbprint, imported.Thumbprint);
@@ -113,7 +115,9 @@ public class ServerCertificateGeneratorTests
         var serverCert = ServerCertificateGenerator.CreateServerCertificate(_caCert, validDays: 30);
 
         var pfxBytes = CertificateExporter.ExportPfx(serverCert, "");
-        var imported = new X509Certificate2(pfxBytes, "", X509KeyStorageFlags.Exportable);
+        var imported = new X509Certificate2(
+            pfxBytes, "",
+            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
 
         var sanExtension = imported.Extensions
             .OfType<X509Extension>()
