@@ -66,6 +66,36 @@ public sealed class WindowsTrustStore : ITrustStore
         return anyRemoved;
     }
 
+    public int RemoveBySubject(string subjectMatch)
+    {
+        int totalRemoved = 0;
+
+        foreach (var location in Locations)
+        {
+            using var store = new X509Store(StoreName.Root, location);
+            try
+            {
+                store.Open(OpenFlags.ReadWrite);
+                var matches = store.Certificates
+                    .Where(c => c.Subject.Contains(subjectMatch, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                foreach (var cert in matches)
+                {
+                    store.Remove(cert);
+                    totalRemoved++;
+                    cert.Dispose();
+                }
+            }
+            catch (Exception)
+            {
+                // May lack permissions for LocalMachine
+            }
+        }
+
+        return totalRemoved;
+    }
+
     public bool IsCertificateTrusted(string thumbprint)
     {
         foreach (var location in Locations)
