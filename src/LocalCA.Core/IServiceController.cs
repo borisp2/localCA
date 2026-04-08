@@ -38,18 +38,34 @@ public sealed class WindowsServiceController : IServiceController
 
     public bool RestartService(string serviceName)
     {
-        var (stopExit, _) = _processRunner.Run("sc", $"stop \"{serviceName}\"");
+        var (stopExit, stopOutput) = _processRunner.Run("sc", $"stop \"{serviceName}\"");
 
-        // Wait briefly for the service to stop
-        // sc stop is async; query until stopped or timeout
-        for (int i = 0; i < 10; i++)
+        // Exit code 0 = stop pending, 1062 = already stopped — both are acceptable.
+        // Any other non-zero exit code is a real failure.
+        const int AlreadyStopped = 1062;
+        if (stopExit != 0 && stopExit != AlreadyStopped)
+            return false;
+
+        // sc stop is async; poll until STOPPED or timeout
+        bool stopped = stopExit == AlreadyStopped;
+        if (!stopped)
         {
-            var (_, output) = _processRunner.Run("sc", $"query \"{serviceName}\"");
-            if (output.Contains("STOPPED", StringComparison.OrdinalIgnoreCase))
-                break;
+            for (int i = 0; i < 10; i++)
+            {
+                var (_, output) = _processRunner.Run("sc", $"query \"{serviceName}\"");
+                if (output.Contains("STOPPED", StringComparison.OrdinalIgnoreCase))
+                {
+                    stopped = true;
+                    break;
+                }
 
-            Thread.Sleep(500);
+                Thread.Sleep(500);
+            }
         }
+
+        // Do not attempt start if the service never reached STOPPED
+        if (!stopped)
+            return false;
 
         var (startExit, _) = _processRunner.Run("sc", $"start \"{serviceName}\"");
         return startExit == 0;

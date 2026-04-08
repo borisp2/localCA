@@ -8,7 +8,7 @@ public static class BackupManager
 {
     /// <summary>
     /// Back up all files (non-directory) in the server directory to a
-    /// timestamped subdirectory (backup-yyyyMMdd-HHmmss).
+    /// timestamped subdirectory (backup-yyyyMMdd-HHmmssfff-XXXX).
     /// Returns the path to the created backup directory.
     /// </summary>
     public static string BackupServerArtifacts(string serverDir)
@@ -19,12 +19,15 @@ public static class BackupManager
     /// <summary>
     /// Back up all files (non-directory) in the server directory to a
     /// timestamped subdirectory using the specified timestamp.
+    /// Appends a 4-hex random suffix to guarantee uniqueness even when
+    /// two backups are created within the same millisecond.
     /// Returns the path to the created backup directory.
     /// </summary>
     public static string BackupServerArtifacts(string serverDir, DateTime timestamp)
     {
-        var tag = timestamp.ToString("yyyyMMdd-HHmmss");
-        var backupDir = Path.Combine(serverDir, $"backup-{tag}");
+        var tag = timestamp.ToString("yyyyMMdd-HHmmssfff");
+        var suffix = Random.Shared.Next(0x10000).ToString("x4");
+        var backupDir = Path.Combine(serverDir, $"backup-{tag}-{suffix}");
         Directory.CreateDirectory(backupDir);
 
         foreach (var file in Directory.GetFiles(serverDir))

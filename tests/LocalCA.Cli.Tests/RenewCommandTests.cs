@@ -255,7 +255,9 @@ public class RenewCommandTests
         var tempDir = SetupInstalledCA();
         try
         {
-            // Do 7 renewals to trigger pruning (keep 5)
+            // Do 7 renewals to trigger pruning (keep 5).
+            // The random suffix in backup directory names guarantees uniqueness
+            // even without any delay between renewals.
             for (int i = 0; i < 7; i++)
             {
                 var cmd = new RenewCommand
@@ -267,9 +269,6 @@ public class RenewCommandTests
                 };
                 var exitCode = cmd.Execute();
                 Assert.Equal(0, exitCode);
-
-                // Small delay to ensure unique backup timestamps
-                Thread.Sleep(1100);
             }
 
             var backups = BackupManager.ListBackups(Path.Combine(tempDir, "server"));

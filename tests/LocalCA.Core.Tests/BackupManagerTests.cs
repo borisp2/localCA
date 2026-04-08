@@ -48,10 +48,13 @@ public class BackupManagerTests
         {
             File.WriteAllText(Path.Combine(serverDir, "test.txt"), "data");
 
-            var timestamp = new DateTime(2025, 3, 15, 14, 30, 45);
+            var timestamp = new DateTime(2025, 3, 15, 14, 30, 45, 123);
             var backupDir = BackupManager.BackupServerArtifacts(serverDir, timestamp);
 
-            Assert.Equal("backup-20250315-143045", Path.GetFileName(backupDir));
+            // Format: backup-yyyyMMdd-HHmmssfff-XXXX (4-hex random suffix)
+            var dirName = Path.GetFileName(backupDir);
+            Assert.StartsWith("backup-20250315-143045123-", dirName);
+            Assert.Matches(@"^backup-20250315-143045123-[0-9a-f]{4}$", dirName);
         }
         finally
         {
@@ -175,6 +178,28 @@ public class BackupManagerTests
             Assert.Equal("backup-20250315-120000", Path.GetFileName(backups[0]));
             Assert.Equal("backup-20250310-120000", Path.GetFileName(backups[1]));
             Assert.Equal("backup-20250301-120000", Path.GetFileName(backups[2]));
+        }
+        finally
+        {
+            CleanupDir(serverDir);
+        }
+    }
+
+    [Fact]
+    public void BackupServerArtifacts_SameTimestamp_ProducesUniqueDirectories()
+    {
+        var serverDir = CreateTempServerDir();
+        try
+        {
+            File.WriteAllText(Path.Combine(serverDir, "test.txt"), "data");
+            var timestamp = new DateTime(2025, 6, 1, 12, 0, 0);
+
+            var dir1 = BackupManager.BackupServerArtifacts(serverDir, timestamp);
+            var dir2 = BackupManager.BackupServerArtifacts(serverDir, timestamp);
+
+            Assert.NotEqual(dir1, dir2);
+            Assert.True(Directory.Exists(dir1));
+            Assert.True(Directory.Exists(dir2));
         }
         finally
         {
