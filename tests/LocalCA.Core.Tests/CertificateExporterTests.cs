@@ -82,15 +82,16 @@ public class CertificateExporterTests
     public void ExportFullchainPem_ContainsServerAndCaCerts()
     {
         var (caCert, caKey) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
-        var serverCert = ServerCertificateGenerator.CreateServerCertificate(caCert, validDays: 30);
+        var (serverCert, serverKey) = ServerCertificateGenerator.CreateServerCertificateWithKey(caCert, validDays: 30);
 
-        var fullchain = CertificateExporter.ExportFullchainPem(serverCert, caCert);
+        var fullchain = CertificateExporter.ExportFullchainPem(serverCert, caCert, serverKey);
 
         // Should contain two certificates and one private key
         var certCount = fullchain.Split("-----BEGIN CERTIFICATE-----").Length - 1;
         Assert.Equal(2, certCount);
         Assert.Contains("-----BEGIN PRIVATE KEY-----", fullchain);
 
+        serverKey.Dispose();
         serverCert.Dispose();
         caKey.Dispose();
         caCert.Dispose();
@@ -99,12 +100,11 @@ public class CertificateExporterTests
     [Fact]
     public void ExportPrivateKeyPem_ServerKeyFromGeneratorIsExportable()
     {
-        // End-to-end: CreateServerCertificate → GetRSAPrivateKey → ExportPrivateKeyPem.
-        // This is the exact path that fails on Windows CI without EphemeralKeySet.
+        // End-to-end: CreateServerCertificateWithKey returns a pre-captured exportable
+        // key.  This is the exact code path used in InstallCommand / RenewCommand.
         var (caCert, caKey) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
-        var serverCert = ServerCertificateGenerator.CreateServerCertificate(caCert, validDays: 30);
+        var (serverCert, serverKey) = ServerCertificateGenerator.CreateServerCertificateWithKey(caCert, validDays: 30);
 
-        var serverKey = serverCert.GetRSAPrivateKey()!;
         var pem = CertificateExporter.ExportPrivateKeyPem(serverKey);
         Assert.StartsWith("-----BEGIN PRIVATE KEY-----", pem);
 
@@ -117,6 +117,7 @@ public class CertificateExporterTests
         Assert.True(pubKey.VerifyData(data, sig, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
 
         reimported.Dispose();
+        serverKey.Dispose();
         serverCert.Dispose();
         caKey.Dispose();
         caCert.Dispose();
@@ -131,9 +132,9 @@ public class CertificateExporterTests
             DirectoryLayout.EnsureDirectories(tempDir);
 
             var (caCert, caKey) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
-            var serverCert = ServerCertificateGenerator.CreateServerCertificate(caCert, validDays: 30);
+            var (serverCert, serverKey) = ServerCertificateGenerator.CreateServerCertificateWithKey(caCert, validDays: 30);
 
-            CertificateExporter.WriteArtifacts(tempDir, caCert, caKey, serverCert);
+            CertificateExporter.WriteArtifacts(tempDir, caCert, caKey, serverCert, serverKey);
 
             Assert.True(File.Exists(Path.Combine(tempDir, "private", "ca.key")));
             Assert.True(File.Exists(Path.Combine(tempDir, "certs", "ca.crt")));
@@ -150,6 +151,7 @@ public class CertificateExporterTests
             Assert.True(loaded.HasPrivateKey);
             loaded.Dispose();
 
+            serverKey.Dispose();
             serverCert.Dispose();
             caKey.Dispose();
             caCert.Dispose();
@@ -171,9 +173,9 @@ public class CertificateExporterTests
             DirectoryLayout.EnsureDirectories(tempDir);
 
             var (caCert, caKey) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
-            var serverCert = ServerCertificateGenerator.CreateServerCertificate(caCert, validDays: 30);
+            var (serverCert, serverKey) = ServerCertificateGenerator.CreateServerCertificateWithKey(caCert, validDays: 30);
 
-            CertificateExporter.WriteArtifacts(tempDir, caCert, caKey, serverCert);
+            CertificateExporter.WriteArtifacts(tempDir, caCert, caKey, serverCert, serverKey);
 
             // Re-read CA key PEM and verify it's usable
             var caKeyPem = File.ReadAllText(Path.Combine(tempDir, "private", "ca.key"));
@@ -193,6 +195,7 @@ public class CertificateExporterTests
 
             reimportedCaKey.Dispose();
             reimportedServerKey.Dispose();
+            serverKey.Dispose();
             serverCert.Dispose();
             caKey.Dispose();
             caCert.Dispose();

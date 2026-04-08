@@ -65,12 +65,12 @@ public sealed class InstallCommand
 
         // Phase 4: Server certificate
         log.Phase(4, "Generating server certificate");
-        var serverCert = ServerCertificateGenerator.CreateServerCertificate(caCert, ServerValidDays);
+        var (serverCert, serverKey) = ServerCertificateGenerator.CreateServerCertificateWithKey(caCert, ServerValidDays);
         log.Info($"Server cert generated: {serverCert.Subject} (valid until {serverCert.NotAfter:yyyy-MM-dd})");
 
         // Phase 5: Export artifacts
         log.Phase(5, "Exporting certificate artifacts");
-        CertificateExporter.WriteArtifacts(RootDir, caCert, caKey, serverCert);
+        CertificateExporter.WriteArtifacts(RootDir, caCert, caKey, serverCert, serverKey);
         log.Info("Exported: ca.key, ca.crt, localhost.key, localhost.crt, localhost.pfx, localhost-fullchain.pem");
 
         // Summary
@@ -87,6 +87,7 @@ public sealed class InstallCommand
         Console.WriteLine(summary);
 
         // Cleanup
+        serverKey.Dispose();
         caKey.Dispose();
         caCert.Dispose();
         serverCert.Dispose();

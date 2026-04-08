@@ -15,6 +15,17 @@ public static class ServerCertificateGenerator
         int keySizeBits = 2048,
         IEnumerable<string>? additionalDnsNames = null)
     {
+        var (cert, key) = CreateServerCertificateWithKey(caCert, validDays, keySizeBits, additionalDnsNames);
+        key.Dispose();
+        return cert;
+    }
+
+    public static (X509Certificate2 Certificate, RSA PrivateKey) CreateServerCertificateWithKey(
+        X509Certificate2 caCert,
+        int validDays = 825,
+        int keySizeBits = 2048,
+        IEnumerable<string>? additionalDnsNames = null)
+    {
         var machineName = Environment.MachineName;
         var dnsNames = new List<string> { "localhost", machineName, $"{machineName}.local" };
         if (additionalDnsNames != null)
@@ -26,7 +37,7 @@ public static class ServerCertificateGenerator
             IPAddress.IPv6Loopback // ::1
         };
 
-        return CreateServerCertificate(caCert, dnsNames, ipAddresses, validDays, keySizeBits);
+        return CreateServerCertificateWithKey(caCert, dnsNames, ipAddresses, validDays, keySizeBits);
     }
 
     public static X509Certificate2 CreateServerCertificate(
@@ -36,7 +47,34 @@ public static class ServerCertificateGenerator
         int validDays = 825,
         int keySizeBits = 2048)
     {
+        var (cert, key) = CreateServerCertificateWithKey(caCert, dnsNames, ipAddresses, validDays, keySizeBits);
+        key.Dispose();
+        return cert;
+    }
+
+    /// <summary>
+    /// Creates a server certificate and returns it together with a standalone
+    /// RSA private key that is guaranteed to be exportable on all platforms.
+    /// The returned RSA key is built from bytes captured before any
+    /// certificate/PFX operation, so it is never affected by Windows CNG
+    /// export restrictions.  Callers that need to export the private key PEM
+    /// should use the returned RSA instance instead of
+    /// <c>cert.GetRSAPrivateKey()</c>.
+    /// </summary>
+    public static (X509Certificate2 Certificate, RSA PrivateKey) CreateServerCertificateWithKey(
+        X509Certificate2 caCert,
+        IReadOnlyList<string> dnsNames,
+        IReadOnlyList<IPAddress> ipAddresses,
+        int validDays = 825,
+        int keySizeBits = 2048)
+    {
         using var serverKey = RSA.Create(keySizeBits);
+
+        // Capture key bytes from the original software-backed handle BEFORE
+        // it touches any certificate operation.  On Windows, CopyWithPrivateKey
+        // / PFX round-trip can produce a CNG handle that refuses all export
+        // operations (ExportPkcs8PrivateKey, ExportParameters, etc.).
+        var rawKeyBytes = serverKey.ExportPkcs8PrivateKey();
 
         var subject = new X500DistinguishedName("CN=localhost");
         var request = new CertificateRequest(subject, serverKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -86,12 +124,19 @@ public static class ServerCertificateGenerator
         // Combine with private key
         var certWithKey = cert.CopyWithPrivateKey(serverKey);
 
-        // Return a new cert from PFX round-trip to ensure it's fully portable.
+        // PFX round-trip so the cert is fully portable.
         // EphemeralKeySet keeps the private key in memory only (no Windows key-store
         // persistence), which avoids CNG non-exportable handle issues on Windows CI.
-        return new X509Certificate2(
+        var portableCert = new X509Certificate2(
             certWithKey.Export(X509ContentType.Pfx, ""),
             "",
             X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
+
+        // Build a standalone RSA key from the pre-captured bytes — guaranteed
+        // exportable on all platforms, independent of CNG handle state.
+        var exportableKey = RSA.Create();
+        exportableKey.ImportPkcs8PrivateKey(rawKeyBytes, out _);
+
+        return (portableCert, exportableKey);
     }
 }

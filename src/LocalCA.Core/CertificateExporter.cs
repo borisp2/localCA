@@ -24,10 +24,25 @@ public static class CertificateExporter
         catch (CryptographicException)
         {
             // On Windows, CNG-backed keys may refuse ExportPkcs8PrivateKey even
-            // when created with X509KeyStorageFlags.Exportable.  Work around by
-            // exporting the key parameters and re-importing into a new,
-            // software-only RSA instance that is always exportable.
-            var parameters = privateKey.ExportParameters(includePrivateParameters: true);
+            // when created with X509KeyStorageFlags.Exportable.  Re-import the
+            // key parameters into a fresh software-only RSA instance.
+            // ExportParameters can also throw on some CNG handles, so try
+            // ExportRSAPrivateKey (PKCS#1 DER) as a second fallback.
+            RSAParameters parameters;
+            try
+            {
+                parameters = privateKey.ExportParameters(includePrivateParameters: true);
+            }
+            catch (CryptographicException)
+            {
+                // Last resort: export PKCS#1 DER bytes and re-import.
+                var pkcs1Bytes = privateKey.ExportRSAPrivateKey();
+                using var reimported = RSA.Create();
+                reimported.ImportRSAPrivateKey(pkcs1Bytes, out _);
+                keyBytes = reimported.ExportPkcs8PrivateKey();
+                return new string(PemEncoding.Write("PRIVATE KEY", keyBytes));
+            }
+
             using var exportable = RSA.Create();
             exportable.ImportParameters(parameters);
             keyBytes = exportable.ExportPkcs8PrivateKey();
@@ -46,16 +61,17 @@ public static class CertificateExporter
     /// </summary>
     public static string ExportFullchainPem(
         X509Certificate2 serverCert,
-        X509Certificate2 caCert)
+        X509Certificate2 caCert,
+        RSA? serverPrivateKey = null)
     {
         var sb = new StringBuilder();
         sb.AppendLine(serverCert.ExportCertificatePem());
         sb.AppendLine(caCert.ExportCertificatePem());
 
-        var serverKey = serverCert.GetRSAPrivateKey();
-        if (serverKey != null)
+        var keyToExport = serverPrivateKey ?? serverCert.GetRSAPrivateKey();
+        if (keyToExport != null)
         {
-            sb.AppendLine(ExportPrivateKeyPem(serverKey));
+            sb.AppendLine(ExportPrivateKeyPem(keyToExport));
         }
 
         return sb.ToString();
@@ -68,7 +84,8 @@ public static class CertificateExporter
         string rootDir,
         X509Certificate2 caCert,
         RSA caPrivateKey,
-        X509Certificate2 serverCert)
+        X509Certificate2 serverCert,
+        RSA? serverPrivateKey = null)
     {
         var privateDir = Path.Combine(rootDir, "private");
         var certsDir = Path.Combine(rootDir, "certs");
@@ -84,8 +101,11 @@ public static class CertificateExporter
             Path.Combine(certsDir, "ca.crt"),
             ExportCertificatePem(caCert));
 
-        // Server private key
-        var serverKey = serverCert.GetRSAPrivateKey()
+        // Server private key — prefer the pre-captured exportable key when
+        // provided; fall back to extracting from the certificate (which may
+        // yield a non-exportable CNG handle on Windows).
+        var serverKey = serverPrivateKey
+            ?? serverCert.GetRSAPrivateKey()
             ?? throw new InvalidOperationException("Server certificate has no private key.");
         File.WriteAllText(
             Path.Combine(serverDir, "localhost.key"),
@@ -104,6 +124,6 @@ public static class CertificateExporter
         // Fullchain PEM
         File.WriteAllText(
             Path.Combine(serverDir, "localhost-fullchain.pem"),
-            ExportFullchainPem(serverCert, caCert));
+            ExportFullchainPem(serverCert, caCert, serverPrivateKey));
     }
 }

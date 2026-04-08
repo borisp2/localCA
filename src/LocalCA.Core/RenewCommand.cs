@@ -147,15 +147,13 @@ public sealed class RenewCommand
         using var caCertBase = new X509Certificate2(caCertPath);
         using var caCert = caCertBase.CopyWithPrivateKey(caKey);
 
-        var serverCert = ServerCertificateGenerator.CreateServerCertificate(caCert, ServerValidDays);
+        var (serverCert, serverKey) = ServerCertificateGenerator.CreateServerCertificateWithKey(caCert, ServerValidDays);
 
         log.Info($"New server cert generated: {serverCert.Subject} (valid until {serverCert.NotAfter:yyyy-MM-dd})");
 
-        // Write artifacts
+        // Write artifacts — use the pre-captured serverKey which is guaranteed
+        // exportable, avoiding Windows CNG handle issues.
         log.Phase(4, "Exporting renewed certificate artifacts");
-
-        var serverKey = serverCert.GetRSAPrivateKey()
-            ?? throw new InvalidOperationException("Server certificate has no private key.");
 
         File.WriteAllText(
             Path.Combine(serverDir, "localhost.key"),
@@ -171,7 +169,7 @@ public sealed class RenewCommand
 
         File.WriteAllText(
             Path.Combine(serverDir, "localhost-fullchain.pem"),
-            CertificateExporter.ExportFullchainPem(serverCert, caCertBase));
+            CertificateExporter.ExportFullchainPem(serverCert, caCertBase, serverKey));
 
         log.Info("Exported: localhost.key, localhost.crt, localhost.pfx, localhost-fullchain.pem");
 
@@ -190,6 +188,7 @@ public sealed class RenewCommand
             Console.Error.WriteLine("Warning: renewed certificate verification has issues.");
         }
 
+        serverKey.Dispose();
         serverCert.Dispose();
 
         // Restart service if configured
