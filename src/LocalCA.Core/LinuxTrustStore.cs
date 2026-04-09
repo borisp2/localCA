@@ -61,7 +61,15 @@ public sealed class LinuxTrustStore : ITrustStore
             File.WriteAllText(certPath, pem);
 
             var (exitCode, _) = _processRunner.Run(_distro.UpdateCommand, _distro.UpdateArgs ?? "");
-            return exitCode == 0;
+            if (exitCode != 0)
+            {
+                // Rollback: remove the PEM file so IsCertificateTrusted does not
+                // report a false positive when the trust database was never updated.
+                try { File.Delete(certPath); } catch { /* best effort */ }
+                return false;
+            }
+
+            return true;
         }
         catch (Exception)
         {

@@ -596,13 +596,13 @@ Phase 2 introduces testable interfaces for OS-specific operations:
 |---|---|---|
 | `ITrustStore` | `WindowsTrustStore` | Import/remove CA certs from Windows Root CA stores (LocalMachine + CurrentUser) via `X509Store` API. Supports removal by thumbprint and subject fallback. |
 | `ITrustStore` | `LinuxTrustStore` | Import/remove CA certs on Linux via `/usr/local/share/ca-certificates` + `update-ca-certificates` (Debian/Ubuntu) or `/etc/pki/ca-trust/source/anchors` + `update-ca-trust` (RHEL/Fedora). |
-| `ITrustStore` | `MacTrustStore` | Import/remove CA certs on macOS via the `security` CLI tool targeting the System keychain with login keychain fallback. |
+| `ITrustStore` | `MacOsTrustStore` | Import/remove CA certs on macOS via the `security` CLI tool targeting the System keychain with login keychain fallback. |
 | — | `TrustStoreFactory` | Static factory that returns the correct `ITrustStore` for the current OS (Windows, macOS, Linux) or null if unsupported. |
 | `IFirewallManager` | `WindowsFirewallManager` | Add/remove/check inbound TCP rules via `netsh advfirewall` |
 | `IProcessRunner` | `SystemProcessRunner` | Run external processes; injectable for unit testing firewall and service controller |
 | `IServiceController` | `WindowsServiceController` | Restart/query Windows services via `sc.exe`; injectable for unit testing renewal |
 
-The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `LinuxTrustStore` and `MacTrustStore` shell out via `IProcessRunner` for testability. `TrustStoreFactory` selects the correct implementation at runtime. The `WindowsFirewallManager` and `WindowsServiceController` wrap shell commands behind `IProcessRunner` so all interactions can be unit-tested with a mock process runner. `BackupManager` is a static utility for timestamped backup creation and rotation.
+The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `LinuxTrustStore` and `MacOsTrustStore` shell out via `IProcessRunner` for testability. `TrustStoreFactory` selects the correct implementation at runtime. The `WindowsFirewallManager` and `WindowsServiceController` wrap shell commands behind `IProcessRunner` so all interactions can be unit-tested with a mock process runner. `BackupManager` is a static utility for timestamped backup creation and rotation.
 
 ### Platform-Specific Notes
 

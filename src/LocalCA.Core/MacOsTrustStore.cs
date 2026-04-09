@@ -17,18 +17,18 @@ namespace LocalCA.Core;
 /// <para><b>Permissions:</b> System keychain write access requires root or an admin user.
 /// The class does not escalate privileges; callers must run as root or use sudo.</para>
 /// </summary>
-public sealed class MacTrustStore : ITrustStore
+public sealed class MacOsTrustStore : ITrustStore
 {
     private readonly IProcessRunner _processRunner;
 
     private const string SystemKeychain = "/Library/Keychains/System.keychain";
 
-    public MacTrustStore()
+    public MacOsTrustStore()
         : this(new SystemProcessRunner())
     {
     }
 
-    public MacTrustStore(IProcessRunner processRunner)
+    public MacOsTrustStore(IProcessRunner processRunner)
     {
         _processRunner = processRunner;
     }
@@ -67,31 +67,42 @@ public sealed class MacTrustStore : ITrustStore
     {
         try
         {
-            // Find certificates matching the thumbprint hash
-            // 'security find-certificate' uses SHA-1 hash (-Z flag outputs the hash)
-            var (findExit, findOutput) = _processRunner.Run("security",
-                $"find-certificate -a -Z {SystemKeychain}");
-
-            if (findExit != 0)
-                return false;
-
-            // Parse output to find the certificate with matching hash
-            // Output format: "SHA-1 hash: AABBCC..." followed by certificate attributes
             var normalizedThumbprint = thumbprint.Replace(" ", "").ToUpperInvariant();
+            bool removed = false;
 
-            if (!findOutput.Contains(normalizedThumbprint, StringComparison.OrdinalIgnoreCase))
-                return false;
+            // Try System keychain
+            removed |= RemoveFromKeychain(normalizedThumbprint, SystemKeychain);
 
-            // Remove using the delete-certificate command with hash match
-            var (deleteExit, _) = _processRunner.Run("security",
-                $"delete-certificate -Z {normalizedThumbprint} {SystemKeychain}");
+            // Try login keychain (no explicit keychain path = default/login)
+            removed |= RemoveFromKeychain(normalizedThumbprint, keychainPath: null);
 
-            return deleteExit == 0;
+            return removed;
         }
         catch (Exception)
         {
             return false;
         }
+    }
+
+    private bool RemoveFromKeychain(string normalizedThumbprint, string? keychainPath)
+    {
+        var findArgs = keychainPath != null
+            ? $"find-certificate -a -Z {keychainPath}"
+            : "find-certificate -a -Z";
+
+        var (findExit, findOutput) = _processRunner.Run("security", findArgs);
+        if (findExit != 0)
+            return false;
+
+        if (!findOutput.Contains(normalizedThumbprint, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var deleteArgs = keychainPath != null
+            ? $"delete-certificate -Z {normalizedThumbprint} {keychainPath}"
+            : $"delete-certificate -Z {normalizedThumbprint}";
+
+        var (deleteExit, _) = _processRunner.Run("security", deleteArgs);
+        return deleteExit == 0;
     }
 
     public bool IsCertificateTrusted(string thumbprint)
@@ -123,16 +134,30 @@ public sealed class MacTrustStore : ITrustStore
     {
         int removed = 0;
 
+        // Search and remove from System keychain
+        removed += RemoveBySubjectFromKeychain(subjectMatch, SystemKeychain);
+
+        // Search and remove from login keychain (no explicit path = default/login)
+        removed += RemoveBySubjectFromKeychain(subjectMatch, keychainPath: null);
+
+        return removed;
+    }
+
+    private int RemoveBySubjectFromKeychain(string subjectMatch, string? keychainPath)
+    {
+        int removed = 0;
+
         try
         {
-            // Find certificates matching the subject
-            var (exitCode, output) = _processRunner.Run("security",
-                $"find-certificate -a -c \"{subjectMatch}\" -Z {SystemKeychain}");
+            var findArgs = keychainPath != null
+                ? $"find-certificate -a -c \"{subjectMatch}\" -Z {keychainPath}"
+                : $"find-certificate -a -c \"{subjectMatch}\" -Z";
+
+            var (exitCode, output) = _processRunner.Run("security", findArgs);
 
             if (exitCode != 0 || string.IsNullOrWhiteSpace(output))
                 return 0;
 
-            // Parse SHA-1 hashes from the output and delete each one
             foreach (var line in output.Split('\n'))
             {
                 var trimmed = line.Trim();
@@ -143,8 +168,11 @@ public sealed class MacTrustStore : ITrustStore
                 if (string.IsNullOrEmpty(hash))
                     continue;
 
-                var (deleteExit, _) = _processRunner.Run("security",
-                    $"delete-certificate -Z {hash} {SystemKeychain}");
+                var deleteArgs = keychainPath != null
+                    ? $"delete-certificate -Z {hash} {keychainPath}"
+                    : $"delete-certificate -Z {hash}";
+
+                var (deleteExit, _) = _processRunner.Run("security", deleteArgs);
 
                 if (deleteExit == 0)
                     removed++;

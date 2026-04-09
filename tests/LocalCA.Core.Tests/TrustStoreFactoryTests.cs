@@ -12,7 +12,7 @@ public class TrustStoreFactoryTests
         if (OperatingSystem.IsWindows())
             Assert.IsType<WindowsTrustStore>(store);
         else if (OperatingSystem.IsMacOS())
-            Assert.IsType<MacTrustStore>(store);
+            Assert.IsType<MacOsTrustStore>(store);
         else if (OperatingSystem.IsLinux())
             Assert.IsType<LinuxTrustStore>(store);
         else

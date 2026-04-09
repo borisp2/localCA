@@ -19,7 +19,7 @@ public static class TrustStoreFactory
             return new WindowsTrustStore();
 
         if (OperatingSystem.IsMacOS())
-            return new MacTrustStore();
+            return new MacOsTrustStore();
 
         if (OperatingSystem.IsLinux())
             return new LinuxTrustStore();

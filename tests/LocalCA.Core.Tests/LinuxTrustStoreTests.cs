@@ -126,7 +126,7 @@ public class LinuxTrustStoreTests
     }
 
     [Fact]
-    public void ImportCaCertificate_UpdateFails_ReturnsFalse()
+    public void ImportCaCertificate_UpdateFails_ReturnsFalseAndRollsBackPemFile()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"linuxtrust-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
@@ -143,6 +143,14 @@ public class LinuxTrustStoreTests
                 var result = store.ImportCaCertificate(cert);
 
                 Assert.False(result);
+
+                // Verify the PEM file was cleaned up so IsCertificateTrusted
+                // does not report a false positive.
+                var expectedPath = Path.Combine(tempDir, $"localca-{cert.Thumbprint.ToLowerInvariant()}.crt");
+                Assert.False(File.Exists(expectedPath), "PEM file should be removed when update command fails");
+
+                // Confirm IsCertificateTrusted returns false (no false positive)
+                Assert.False(store.IsCertificateTrusted(cert.Thumbprint));
             }
             finally
             {
