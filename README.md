@@ -316,7 +316,7 @@ Every script writes detailed timestamped logs:
 
 ## C# Migration
 
-A cross-platform C# re-implementation of the certificate generation and management logic. The .NET 8 CLI provides **directory creation, CA generation, server certificate generation, artifact export, certificate verification, status reporting, certificate renewal with backup rotation, uninstall with trust/firewall cleanup**, and abstractions for **Windows trust store import/removal, firewall rule management, and service restart**.
+A cross-platform C# re-implementation of the certificate generation and management logic. The .NET 8 CLI provides **directory creation, CA generation, server certificate generation, artifact export, certificate verification, status reporting, certificate renewal with backup rotation, uninstall with trust/firewall cleanup**, and abstractions for **Windows and macOS trust store import/removal, firewall rule management, and service restart**.
 
 ### Project Structure
 
@@ -374,6 +374,7 @@ dotnet run --project src/LocalCA.Cli -- --help
 | `localca verify` — chain/validity/SAN/EKU validation | 2 | Done |
 | `localca status` — artifact existence + cert metadata report | 2 | Done |
 | Windows trust store import/remove (`ITrustStore`) | 2 | Done |
+| macOS trust store import/remove (`ITrustStore`) | 2 | Done |
 | Windows firewall rule management (`IFirewallManager`) | 2 | Done |
 | `IProcessRunner` abstraction for testable shell-out | 2 | Done |
 | `localca renew` — server cert renewal with expiry threshold | 3 | Done |
@@ -421,7 +422,7 @@ Exit codes: `0` = all checks pass, `1` = one or more checks failed.
 
 #### `localca status`
 
-Report whether CA/server artifacts exist and display certificate metadata (subject, thumbprint, validity window, key size, SANs, trust status on Windows).
+Report whether CA/server artifacts exist and display certificate metadata (subject, thumbprint, validity window, key size, SANs, trust status on Windows and macOS).
 
 ```
 localca status [options]
@@ -485,7 +486,7 @@ Exit codes: `0` = success, `99` = unexpected error.
 3. Removes the firewall inbound rule matching `<AppName> HTTPS (localhost:<port>)`
 4. Optionally deletes the entire `--root-dir` and all contents (`--remove-files`)
 
-**Windows note:** Trust store and firewall operations require elevation (Run as Administrator) for `LocalMachine` scope. On non-Windows platforms, these operations are skipped.
+**Platform notes:** On Windows, trust store and firewall operations require elevation (Run as Administrator) for `LocalMachine` scope. On macOS, System Keychain operations require `sudo`; user keychain operations work without elevation. Firewall and service operations are Windows-only. On Linux and other platforms, trust store operations are skipped.
 
 #### `localca bundle`
 
@@ -595,11 +596,12 @@ Phase 2 introduces testable interfaces for OS-specific operations:
 | Interface | Implementation | Purpose |
 |---|---|---|
 | `ITrustStore` | `WindowsTrustStore` | Import/remove CA certs from Windows Root CA stores (LocalMachine + CurrentUser) via `X509Store` API. Supports removal by thumbprint and subject fallback. |
+| `ITrustStore` | `MacOsTrustStore` | Import/remove CA certs from macOS System and user login keychains via the `security` CLI (`add-trusted-cert` / `remove-trusted-cert`). Sets SSL trust policy via `SecTrustSettingsSetTrustSettings`. Requires `sudo` for System Keychain; falls back to user keychain. |
 | `IFirewallManager` | `WindowsFirewallManager` | Add/remove/check inbound TCP rules via `netsh advfirewall` |
 | `IProcessRunner` | `SystemProcessRunner` | Run external processes; injectable for unit testing firewall and service controller |
 | `IServiceController` | `WindowsServiceController` | Restart/query Windows services via `sc.exe`; injectable for unit testing renewal |
 
-The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `WindowsFirewallManager` and `WindowsServiceController` wrap shell commands behind `IProcessRunner` so all interactions can be unit-tested with a mock process runner. `BackupManager` is a static utility for timestamped backup creation and rotation.
+The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `MacOsTrustStore` wraps the macOS `security` CLI behind `IProcessRunner` for testability. The `WindowsFirewallManager` and `WindowsServiceController` wrap shell commands behind `IProcessRunner` so all interactions can be unit-tested with a mock process runner. `TrustStoreFactory` selects the correct `ITrustStore` implementation based on the current OS. `BackupManager` is a static utility for timestamped backup creation and rotation.
 
 ### Windows-Specific Notes
 
@@ -607,7 +609,15 @@ The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The
 - **Firewall rules** require elevation. The firewall manager creates inbound TCP allow rules matching the PowerShell installer's behavior.
 - **Service restart** uses `sc.exe` under the hood, which requires appropriate permissions for the target service.
 - **Uninstall** attempts trust store removal by thumbprint first. If the CA cert file is not available (already deleted), it falls back to subject-based matching (`<AppName> Localhost Root CA`).
-- On non-Windows platforms, trust store, firewall, and service operations are skipped. The interfaces are available for future platform-specific implementations.
+
+### macOS-Specific Notes
+
+- **Trust store operations** use the `security` CLI tool, which wraps `SecKeychainItemImport` and `SecTrustSettingsSetTrustSettings` from Security.framework.
+- `add-trusted-cert -d admin` targets the System Keychain (`/Library/Keychains/System.keychain`) and requires `sudo` / root. Without elevation, the implementation falls back to the user login keychain.
+- The trust policy is set to **SSL only** (`-p ssl -r trustRoot`), which is equivalent to importing into the Windows Trusted Root CA store — applications using SecureTransport or Network.framework will trust the CA for TLS connections.
+- **Removal** uses `security remove-trusted-cert`, which removes the trust settings. The certificate itself may remain in the keychain but will no longer be trusted.
+- **Lookup** uses `security find-certificate -a -Z` and matches the SHA-1 hash (thumbprint) from the output.
+- On non-macOS/Windows platforms, trust store operations are skipped. Firewall and service operations remain Windows-only.
 
 ### Assumptions
 
