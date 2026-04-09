@@ -61,4 +61,66 @@ public class CertificateAuthorityTests
             cert.Dispose();
         }
     }
+
+    [Fact]
+    public void CreateRootCa_PrivateKeyIsExportableToPkcs8()
+    {
+        // Validates the Windows-safe lifecycle: the returned RSA key must
+        // support ExportPkcs8PrivateKey (fails on Windows/CNG without the
+        // PFX round-trip + EphemeralKeySet fix).
+        var (cert, key) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
+
+        try
+        {
+            var pkcs8 = key.ExportPkcs8PrivateKey();
+            Assert.NotNull(pkcs8);
+            Assert.True(pkcs8.Length > 0);
+        }
+        finally
+        {
+            key.Dispose();
+            cert.Dispose();
+        }
+    }
+
+    [Fact]
+    public void CreateRootCa_CertPrivateKeyIsExportableToPem()
+    {
+        // The cert itself must carry an exportable private key so that
+        // GetRSAPrivateKey() → ExportPkcs8PrivateKey() works (Windows CNG path).
+        var (cert, key) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
+
+        try
+        {
+            Assert.True(cert.HasPrivateKey);
+            var certKey = cert.GetRSAPrivateKey();
+            Assert.NotNull(certKey);
+            var pem = CertificateExporter.ExportPrivateKeyPem(certKey!);
+            Assert.StartsWith("-----BEGIN PRIVATE KEY-----", pem);
+        }
+        finally
+        {
+            key.Dispose();
+            cert.Dispose();
+        }
+    }
+
+    [Fact]
+    public void CreateRootCa_KeyAndCertAreIndependent()
+    {
+        // The returned key must be usable independently of the cert's lifetime.
+        var (cert, key) = CertificateAuthority.CreateRootCa("TestApp", keySizeBits: 2048);
+
+        // Dispose the cert first, then verify the standalone key still works
+        cert.Dispose();
+
+        var pkcs8 = key.ExportPkcs8PrivateKey();
+        Assert.True(pkcs8.Length > 0);
+
+        var data = new byte[] { 1, 2, 3, 4 };
+        var sig = key.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        Assert.NotEmpty(sig);
+
+        key.Dispose();
+    }
 }

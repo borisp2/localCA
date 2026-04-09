@@ -16,6 +16,13 @@ public static class CertificateAuthority
     {
         using var rsa = RSA.Create(keySizeBits);
 
+        // Capture the raw key bytes while the handle is still the original
+        // software-backed key.  On Windows, once the key is attached to a
+        // certificate (CreateSelfSigned / PFX round-trip) the runtime may
+        // return a CNG handle whose export path is restricted.  Grabbing the
+        // bytes here guarantees exportability regardless of platform.
+        var rawKeyBytes = rsa.ExportPkcs8PrivateKey();
+
         var subject = new X500DistinguishedName(
             $"CN={appName} Localhost Root CA, O={appName}, C=XX");
 
@@ -41,10 +48,20 @@ public static class CertificateAuthority
 
         var cert = request.CreateSelfSigned(notBefore, notAfter);
 
-        // Export and re-import so the cert is detached from the ephemeral key
-        var exported = RSA.Create();
-        exported.ImportRSAPrivateKey(rsa.ExportRSAPrivateKey(), out _);
+        // PFX round-trip so both cert and key are fully portable.
+        // EphemeralKeySet keeps the private key in memory only (no Windows
+        // key-store persistence), avoiding CNG non-exportable handle issues.
+        var pfxBytes = cert.Export(X509ContentType.Pfx, "");
+        var portableCert = new X509Certificate2(
+            pfxBytes, "",
+            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
 
-        return (cert, exported);
+        // Build the standalone RSA key from the bytes captured before any
+        // certificate operations, so it is independent of the cert lifetime
+        // and free of any Windows CNG export restrictions.
+        var exported = RSA.Create();
+        exported.ImportPkcs8PrivateKey(rawKeyBytes, out _);
+
+        return (portableCert, exported);
     }
 }

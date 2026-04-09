@@ -49,9 +49,12 @@ public class ServerCertificateGeneratorTests
         var sanText = sanExtension.Format(multiLine: true);
 
         Assert.Contains("127.0.0.1", sanText);
-        // IPv6 loopback may be formatted as ::1 or 0:0:0:0:0:0:0:1 depending on platform
+        // IPv6 loopback may be formatted as ::1, 0:0:0:0:0:0:0:1, or
+        // 0000:0000:0000:0000:0000:0000:0000:0001 depending on platform
         Assert.True(
-            sanText.Contains("::1") || sanText.Contains("0:0:0:0:0:0:0:1"),
+            sanText.Contains("::1") ||
+            sanText.Contains("0:0:0:0:0:0:0:1") ||
+            sanText.Contains("0000:0000:0000:0000:0000:0000:0000:0001"),
             $"Expected IPv6 loopback in SAN but got: {sanText}");
 
         serverCert.Dispose();
@@ -89,8 +92,10 @@ public class ServerCertificateGeneratorTests
         // Export to PFX with empty password
         var pfxBytes = CertificateExporter.ExportPfx(serverCert, "");
 
-        // Re-import
-        var imported = new X509Certificate2(pfxBytes, "", X509KeyStorageFlags.Exportable);
+        // Re-import with EphemeralKeySet to match Windows-safe production path
+        var imported = new X509Certificate2(
+            pfxBytes, "",
+            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
 
         Assert.True(imported.HasPrivateKey);
         Assert.Equal(serverCert.Thumbprint, imported.Thumbprint);
@@ -113,7 +118,9 @@ public class ServerCertificateGeneratorTests
         var serverCert = ServerCertificateGenerator.CreateServerCertificate(_caCert, validDays: 30);
 
         var pfxBytes = CertificateExporter.ExportPfx(serverCert, "");
-        var imported = new X509Certificate2(pfxBytes, "", X509KeyStorageFlags.Exportable);
+        var imported = new X509Certificate2(
+            pfxBytes, "",
+            X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
 
         var sanExtension = imported.Extensions
             .OfType<X509Extension>()
@@ -125,7 +132,9 @@ public class ServerCertificateGeneratorTests
         Assert.Contains("localhost", sanText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("127.0.0.1", sanText);
         Assert.True(
-            sanText.Contains("::1") || sanText.Contains("0:0:0:0:0:0:0:1"),
+            sanText.Contains("::1") ||
+            sanText.Contains("0:0:0:0:0:0:0:1") ||
+            sanText.Contains("0000:0000:0000:0000:0000:0000:0000:0001"),
             $"Expected IPv6 loopback in SAN but got: {sanText}");
 
         imported.Dispose();
