@@ -49,9 +49,12 @@ public class ServerCertificateGeneratorTests
         var sanText = sanExtension.Format(multiLine: true);
 
         Assert.Contains("127.0.0.1", sanText);
-        // IPv6 loopback may be formatted as ::1 or 0:0:0:0:0:0:0:1 depending on platform
+        // IPv6 loopback may be formatted as ::1, 0:0:0:0:0:0:0:1, or
+        // 0000:0000:0000:0000:0000:0000:0000:0001 depending on platform
         Assert.True(
-            sanText.Contains("::1") || sanText.Contains("0:0:0:0:0:0:0:1"),
+            sanText.Contains("::1") ||
+            sanText.Contains("0:0:0:0:0:0:0:1") ||
+            sanText.Contains("0000:0000:0000:0000:0000:0000:0000:0001"),
             $"Expected IPv6 loopback in SAN but got: {sanText}");
 
         serverCert.Dispose();
@@ -129,7 +132,9 @@ public class ServerCertificateGeneratorTests
         Assert.Contains("localhost", sanText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("127.0.0.1", sanText);
         Assert.True(
-            sanText.Contains("::1") || sanText.Contains("0:0:0:0:0:0:0:1"),
+            sanText.Contains("::1") ||
+            sanText.Contains("0:0:0:0:0:0:0:1") ||
+            sanText.Contains("0000:0000:0000:0000:0000:0000:0000:0001"),
             $"Expected IPv6 loopback in SAN but got: {sanText}");
 
         imported.Dispose();

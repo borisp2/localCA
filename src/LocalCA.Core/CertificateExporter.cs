@@ -27,7 +27,8 @@ public static class CertificateExporter
             // when created with X509KeyStorageFlags.Exportable.  Re-import the
             // key parameters into a fresh software-only RSA instance.
             // ExportParameters can also throw on some CNG handles, so try
-            // ExportRSAPrivateKey (PKCS#1 DER) as a second fallback.
+            // ExportEncryptedPkcs8PrivateKey as a last resort — it reliably
+            // works with CNG keys even when plain export methods fail.
             RSAParameters parameters;
             try
             {
@@ -35,10 +36,17 @@ public static class CertificateExporter
             }
             catch (CryptographicException)
             {
-                // Last resort: export PKCS#1 DER bytes and re-import.
-                var pkcs1Bytes = privateKey.ExportRSAPrivateKey();
+                // Last resort: use encrypted PKCS#8 export (supported by CNG),
+                // then re-import into a software-only RSA to get plain bytes.
+                var pbeParams = new PbeParameters(
+                    PbeEncryptionAlgorithm.Aes256Cbc,
+                    HashAlgorithmName.SHA256,
+                    iterationCount: 1);
+                var encryptedBytes = privateKey.ExportEncryptedPkcs8PrivateKey(
+                    "export-temp"u8, pbeParams);
                 using var reimported = RSA.Create();
-                reimported.ImportRSAPrivateKey(pkcs1Bytes, out _);
+                reimported.ImportEncryptedPkcs8PrivateKey(
+                    "export-temp"u8, encryptedBytes, out _);
                 keyBytes = reimported.ExportPkcs8PrivateKey();
                 return new string(PemEncoding.Write("PRIVATE KEY", keyBytes));
             }
