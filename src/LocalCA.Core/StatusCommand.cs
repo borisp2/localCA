@@ -18,9 +18,7 @@ public sealed class StatusCommand
             return 1;
         }
 
-        ITrustStore? trustStore = null;
-        if (OperatingSystem.IsWindows())
-            trustStore = new WindowsTrustStore();
+        ITrustStore? trustStore = TrustStoreFactory.Create();
 
         var report = CertificateStatusReporter.GetStatus(RootDir, trustStore);
         Console.Write(report.FormatReport());

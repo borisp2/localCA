@@ -595,19 +595,43 @@ Phase 2 introduces testable interfaces for OS-specific operations:
 | Interface | Implementation | Purpose |
 |---|---|---|
 | `ITrustStore` | `WindowsTrustStore` | Import/remove CA certs from Windows Root CA stores (LocalMachine + CurrentUser) via `X509Store` API. Supports removal by thumbprint and subject fallback. |
+| `ITrustStore` | `LinuxTrustStore` | Import/remove CA certs on Linux via `/usr/local/share/ca-certificates` + `update-ca-certificates` (Debian/Ubuntu) or `/etc/pki/ca-trust/source/anchors` + `update-ca-trust` (RHEL/Fedora). |
+| `ITrustStore` | `MacOsTrustStore` | Import/remove CA certs on macOS via the `security` CLI tool targeting the System keychain with login keychain fallback. |
+| — | `TrustStoreFactory` | Static factory that returns the correct `ITrustStore` for the current OS (Windows, macOS, Linux) or null if unsupported. |
 | `IFirewallManager` | `WindowsFirewallManager` | Add/remove/check inbound TCP rules via `netsh advfirewall` |
 | `IProcessRunner` | `SystemProcessRunner` | Run external processes; injectable for unit testing firewall and service controller |
 | `IServiceController` | `WindowsServiceController` | Restart/query Windows services via `sc.exe`; injectable for unit testing renewal |
 
-The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `WindowsFirewallManager` and `WindowsServiceController` wrap shell commands behind `IProcessRunner` so all interactions can be unit-tested with a mock process runner. `BackupManager` is a static utility for timestamped backup creation and rotation.
+The `WindowsTrustStore` uses .NET's `X509Store` API directly (no shell-out). The `LinuxTrustStore` and `MacOsTrustStore` shell out via `IProcessRunner` for testability. `TrustStoreFactory` selects the correct implementation at runtime. The `WindowsFirewallManager` and `WindowsServiceController` wrap shell commands behind `IProcessRunner` so all interactions can be unit-tested with a mock process runner. `BackupManager` is a static utility for timestamped backup creation and rotation.
 
-### Windows-Specific Notes
+### Platform-Specific Notes
+
+#### Windows
 
 - **Trust store operations** require elevation (Run as Administrator) for `LocalMachine` store access. `CurrentUser` store works without elevation.
 - **Firewall rules** require elevation. The firewall manager creates inbound TCP allow rules matching the PowerShell installer's behavior.
 - **Service restart** uses `sc.exe` under the hood, which requires appropriate permissions for the target service.
 - **Uninstall** attempts trust store removal by thumbprint first. If the CA cert file is not available (already deleted), it falls back to subject-based matching (`<AppName> Localhost Root CA`).
-- On non-Windows platforms, trust store, firewall, and service operations are skipped. The interfaces are available for future platform-specific implementations.
+
+#### Linux
+
+- **Supported distro families:**
+  - **Debian/Ubuntu/SUSE:** Copies the CA PEM to `/usr/local/share/ca-certificates/localca-<thumbprint>.crt` and runs `update-ca-certificates`.
+  - **RHEL/Fedora/CentOS:** Copies the CA PEM to `/etc/pki/ca-trust/source/anchors/localca-<thumbprint>.crt` and runs `update-ca-trust extract`.
+- **Distro detection** is automatic at runtime. If neither directory exists, trust store operations are silently skipped.
+- **Permissions:** Writing to the system CA directory and running the update command require **root** (`sudo`). The implementation does not escalate privileges.
+- **IsCertificateTrusted** checks for the presence of the managed PEM file. This is reliable for certificates imported by localCA but does not scan the full consolidated bundle.
+
+#### macOS
+
+- **Trust store operations** use the `security` CLI tool targeting the **System keychain** (`/Library/Keychains/System.keychain`).
+- The `add-trusted-cert` command is used with `-r trustRoot` to set SSL trust policy.
+- **Permissions:** System keychain access requires **admin/root** privileges. If the System keychain is inaccessible, import falls back to the user's login keychain.
+- **IsCertificateTrusted** searches both the System and login keychains using `security find-certificate` with SHA-1 hash matching.
+
+#### Unsupported Platforms
+
+- On platforms where no trust store implementation is available, `TrustStoreFactory.Create()` returns `null` and trust store operations are skipped gracefully. Firewall and service operations remain Windows-only.
 
 ### Assumptions
 

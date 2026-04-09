@@ -110,9 +110,7 @@ public sealed class UninstallCommand
 
     private void RemoveTrustEntries(InstallLogger log)
     {
-        var trustStore = TrustStore;
-        if (trustStore == null && OperatingSystem.IsWindows())
-            trustStore = new WindowsTrustStore();
+        var trustStore = TrustStore ?? TrustStoreFactory.Create();
 
         if (trustStore == null)
         {
